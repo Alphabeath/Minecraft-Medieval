@@ -480,6 +480,41 @@ Function Eula
     }
 }
 
+# Configurar e iniciar Playit
+Function SetupPlayit {
+    Write-Host "Configurando Playit..."
+    
+    # Verificar si Playit está instalado 
+    if (!(Get-Command playit -ErrorAction SilentlyContinue)) {
+        Write-Host "Instalando Playit..."
+        
+        # Descargar e instalar Playit
+        Invoke-Expression "& {$(Invoke-RestMethod https://playit.gg/download/windows)} /VERYSILENT /SUPPRESSMSGBOXES"
+        
+        # Esperar a que termine la instalación
+        Start-Sleep -Seconds 5
+    }
+
+    # Iniciar Playit en segundo plano
+    Write-Host "Iniciando Playit..."
+    $playitProcess = Start-Process playit -PassThru -WindowStyle Hidden
+    
+    # Guardar el PID para poder terminarlo después
+    $playitProcess.Id | Out-File playit.pid
+    
+    # Esperar a que Playit inicie
+    Start-Sleep -Seconds 5
+    
+    # Verificar si Playit está corriendo
+    $pid = Get-Content playit.pid
+    if (Get-Process -Id $pid -ErrorAction SilentlyContinue) {
+        Write-Host "Playit iniciado correctamente"
+    } else {
+        Write-Host "Error al iniciar Playit"
+        exit 1
+    }
+}
+
 if ( ${PSScriptRoot}.Contains(" "))
 {
     "WARNING! The current location of this script contains spaces. This may cause this server to crash!"
@@ -532,6 +567,7 @@ switch ( ${ModLoader} )
 CheckJavaBitness
 Minecraft
 Eula
+SetupPlayit
 
 ""
 "Starting server..."
@@ -555,4 +591,10 @@ RunJavaCommand "${ServerRunCommand}"
 ""
 "Exiting..."
 PauseScript
+
+# Agregar limpieza de Playit al salir 
+$pid = Get-Content playit.pid
+Stop-Process -Id $pid -Force
+Remove-Item playit.pid
+
 exit 0
