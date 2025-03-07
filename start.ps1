@@ -481,37 +481,75 @@ Function Eula
 }
 
 # Configurar e iniciar Playit
-Function SetupPlayit {
+Function SetupPlayit 
+{
     Write-Host "Configurando Playit..."
     
-    # Verificar si Playit está instalado 
+    # Verificar si Playit está instalado
     if (!(Get-Command playit -ErrorAction SilentlyContinue)) {
         Write-Host "Instalando Playit..."
         
-        # Descargar e instalar Playit
-        Invoke-Expression "& {$(Invoke-RestMethod https://playit.gg/download/windows)} /VERYSILENT /SUPPRESSMSGBOXES"
+        # Crear directorio temporal para la descarga
+        $tempDir = Join-Path $env:TEMP "PlayitInstall"
+        if (!(Test-Path $tempDir)) {
+            New-Item -Path $tempDir -ItemType Directory | Out-Null
+        }
         
-        # Esperar a que termine la instalación
-        Start-Sleep -Seconds 5
+        # Descargar el instalador de Playit
+        $installerPath = Join-Path $tempDir "playit_installer.exe"
+        $downloadUrl = "https://playit.gg/downloads/latest/win64"
+        
+        Write-Host "Descargando Playit desde $downloadUrl..."
+        Invoke-WebRequest -Uri $downloadUrl -OutFile $installerPath
+        
+        # Ejecutar el instalador silenciosamente
+        Write-Host "Instalando Playit..."
+        Start-Process -FilePath $installerPath -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES" -Wait
+        
+        Write-Host "Instalación de Playit completada."
+        
+        # Limpiar archivos temporales
+        Remove-Item -Path $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+        
+        # Recargar PATH para reconocer Playit
+        $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path", "User")
     }
 
     # Iniciar Playit en segundo plano
     Write-Host "Iniciando Playit..."
-    $playitProcess = Start-Process playit -PassThru -WindowStyle Hidden
     
-    # Guardar el PID para poder terminarlo después
-    $playitProcess.Id | Out-File playit.pid
+    # Intentar cerrar cualquier instancia previa de Playit
+    Get-Process -Name "playit" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     
-    # Esperar a que Playit inicie
-    Start-Sleep -Seconds 5
+    # Crear archivo de log para Playit
+    $playitLogFile = Join-Path (Get-Location) "playit.log"
     
-    # Verificar si Playit está corriendo
-    $pid = Get-Content playit.pid
-    if (Get-Process -Id $pid -ErrorAction SilentlyContinue) {
-        Write-Host "Playit iniciado correctamente"
-    } else {
-        Write-Host "Error al iniciar Playit"
-        exit 1
+    try {
+        # Iniciar Playit con redirección de salida
+        $playitProcess = Start-Process playit -PassThru -WindowStyle Hidden -RedirectStandardOutput $playitLogFile -RedirectStandardError "$playitLogFile.err"
+        
+        # Guardar el PID para poder terminarlo después
+        $playitProcess.Id | Out-File -FilePath (Join-Path (Get-Location) "playit.pid")
+        
+        # Esperar a que Playit inicie
+        Start-Sleep -Seconds 10
+        
+        # Verificar si Playit está corriendo
+        if (Get-Process -Id $playitProcess.Id -ErrorAction SilentlyContinue) {
+            Write-Host "Playit iniciado correctamente con PID: $($playitProcess.Id)"
+            Write-Host "Para ver tu servidor en línea, revisa la interfaz web de Playit"
+        } else {
+            Write-Host "Error al iniciar Playit" -ForegroundColor Red
+            if (Test-Path "$playitLogFile.err") {
+                Write-Host "Error log:" -ForegroundColor Red
+                Get-Content "$playitLogFile.err" | Select-Object -First 10
+            }
+            Crash
+        }
+    }
+    catch {
+        Write-Host "Error al iniciar Playit: $_" -ForegroundColor Red
+        Crash
     }
 }
 
@@ -590,11 +628,20 @@ RunJavaCommand "${ServerRunCommand}"
 
 ""
 "Exiting..."
+
+if (Test-Path playit.pid) {
+    try {
+        $playitPid = Get-Content -Path playit.pid
+        Write-Host "Deteniendo Playit (PID: $playitPid)..."
+        Stop-Process -Id $playitPid -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path playit.pid -Force -ErrorAction SilentlyContinue
+        Write-Host "Playit detenido correctamente" -ForegroundColor Green
+    }
+    catch {
+        Write-Host "Error al detener Playit: $_" -ForegroundColor Yellow
+    }
+}
 PauseScript
 
-# Agregar limpieza de Playit al salir 
-$pid = Get-Content playit.pid
-Stop-Process -Id $pid -Force
-Remove-Item playit.pid
 
 exit 0
